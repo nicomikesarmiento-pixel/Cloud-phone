@@ -16,24 +16,53 @@ app.use(express.static(path.join(__dirname, 'public')));
 const STORAGE_DIR = path.join(__dirname, 'cloud_vault');
 fs.ensureDirSync(STORAGE_DIR);
 
-// Direct Link Resolver para sa MediaFire at iba pa
+// Matalinong Link Extractor para sa kahit anong site (MediaFire, atbp.)
 async function resolveDirectLink(pageUrl) {
-    if (pageUrl.includes('mediafire.com')) {
-        try {
+    try {
+        // Kung MediaFire link
+        if (pageUrl.includes('mediafire.com')) {
             const { data } = await axios.get(pageUrl, {
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }
             });
             const $ = cheerio.load(data);
             const downloadBtn = $('#downloadButton').attr('href');
             if (downloadBtn) return downloadBtn;
-        } catch (e) {
-            console.error('MediaFire extraction error:', e.message);
         }
+        
+        // Para sa iba pang sites na nagbibigay ng HTML landing page, susubukan nating basahin ang direct download anchor tags
+        const { data, headers } = await axios.get(pageUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' }
+        });
+
+        // Kung direct file na pala ito, ibalik lang ang URL
+        if (headers['content-type'] && !headers['content-type'].includes('text/html')) {
+            return pageUrl;
+        }
+
+        // Kung HTML page, hahanapin ang unang .apk link o download link sa loob ng pahina
+        const $ = cheerio.load(data);
+        let foundLink = null;
+        $('a').each((i, el) => {
+            const href = $(el).attr('href');
+            if (href && (href.endsWith('.apk') || href.includes('download'))) {
+                foundLink = href;
+                return false; // break loop
+            }
+        });
+
+        if (foundLink) {
+            // Kung relative URL, ayusin
+            if (foundLink.startsWith('http')) return foundLink;
+            const parsedUrl = new URL(pageUrl);
+            return `${parsedUrl.origin}${foundLink}`;
+        }
+    } catch (e) {
+        console.error('Link resolution fallback to original:', e.message);
     }
     return pageUrl;
 }
 
-// PHASE 1: Cloud Fetch API (Fake Phone Download papunta sa Cloud Vault)
+// PHASE 1: Cloud Fetch API
 app.post('/api/fetch-to-cloud', async (req, res) => {
     let { url } = req.body;
     if (!url) return res.status(400).json({ error: 'Kailangan ng valid na link' });
@@ -49,7 +78,8 @@ app.post('/api/fetch-to-cloud', async (req, res) => {
             url: directUrl,
             responseType: 'stream',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                'Accept': 'application/vnd.android.package-archive,application/octet-stream,*/*'
             }
         });
 
@@ -58,9 +88,10 @@ app.post('/api/fetch-to-cloud', async (req, res) => {
 
         writer.on('finish', async () => {
             const stats = await fs.stat(filePath);
-            if (stats.size < 1024 * 100) {
+            // Pinaamo natin ang size limit para masigurong hindi agad mag-error kung medyo maliit ang file
+            if (stats.size < 1024 * 10) { 
                 await fs.remove(filePath);
-                return res.status(400).json({ error: 'Maling file o HTML page lang ang nakuha. Siguraduhing direct APK link.' });
+                return res.status(400).json({ error: 'Nabigo ang server na makuha ang buong file. Pakisubukan ang ibang direktang link.' });
             }
 
             res.json({
@@ -78,11 +109,11 @@ app.post('/api/fetch-to-cloud', async (req, res) => {
         });
 
     } catch (err) {
-        res.status(500).json({ error: 'Hindi ma-access ang ibinigay na URL.' });
+        res.status(500).json({ error: 'Hindi ma-access o block ang ibinigay na URL.' });
     }
 });
 
-// PHASE 2: Local Stream Relay API + INSTANT AUTO-DELETE sa Cloud Server pagkatapos maipasa
+// PHASE 2: Local Stream Relay API + Instant Auto-Delete
 app.get('/api/relay/stream/:transferId', (req, res) => {
     const { transferId } = req.params;
     const filename = `app_${transferId}.apk`;
@@ -119,3 +150,4 @@ app.get('/api/relay/stream/:transferId', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Cloud Server active on port ${PORT}`);
 });
+    
