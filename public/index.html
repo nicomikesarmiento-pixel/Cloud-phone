@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud-to-Phone Local Relay</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #0f172a;
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background-color: #1e293b;
+            padding: 30px;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+            text-align: center;
+        }
+        h2 { color: #38bdf8; margin-bottom: 8px; font-size: 22px; }
+        p { font-size: 13px; color: #94a3b8; margin-bottom: 20px; }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            background-color: #0f172a;
+            color: #fff;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            background-color: #0284c7;
+            color: #fff;
+            font-weight: bold;
+            font-size: 15px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover { background-color: #0369a1; }
+
+        .view-section { display: none; }
+        .view-active { display: block; }
+
+        .transfer-icon {
+            font-size: 45px;
+            margin-bottom: 10px;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .progress-container {
+            width: 100%;
+            height: 12px;
+            background-color: #0f172a;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 15px 0;
+            border: 1px solid #334155;
+        }
+        .progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #38bdf8, #22c55e);
+            transition: width 0.1s linear;
+        }
+
+        .stats-grid {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #cbd5e1;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    
+    <!-- WINDOW 1: Input URL Window -->
+    <div id="windowInput" class="view-section view-active">
+        <h2>Cloud-to-Phone Relay</h2>
+        <p>I-paste ang link. Ang cloud muna ang kukuha, tapos ay ipapasa sa phone mo nang parang local ShareIt transfer!</p>
+        <input type="text" id="appUrl" placeholder="I-paste ang APK link dito...">
+        <button onclick="startCloudFetch()">Simulan ang Process</button>
+    </div>
+
+    <!-- WINDOW 2: Cloud Downloading Window -->
+    <div id="windowCloud" class="view-section">
+        <div class="transfer-icon">☁️ ➔ 📱</div>
+        <h2>Kinukuha sa Cloud Server...</h2>
+        <p>Nagpapakilalang Android Phone ang cloud server para i-download ang APK file mula sa link na binigay mo.</p>
+        <div style="font-size: 13px; color: #e2e8f0;">Mangyaring maghintay nang sandali...</div>
+    </div>
+
+    <!-- WINDOW 3: Real-Time Local Stream Transfer Window -->
+    <div id="windowTransfer" class="view-section">
+        <div class="transfer-icon">⚡</div>
+        <h2 style="color: #22c55e;">Inipasa sa Phone Mo</h2>
+        <p>Real-time Local Stream Transfer via Relay API</p>
+
+        <div class="progress-container">
+            <div id="progressBar" class="progress-bar"></div>
+        </div>
+
+        <div class="stats-grid">
+            <span id="percentText">0%</span>
+            <span id="sizeText">0 MB / 0 MB</span>
+        </div>
+        <div id="speedText" style="font-size: 12px; color: #38bdf8; margin-top: 8px;">Speed: 0 MB/s</div>
+    </div>
+
+    <!-- WINDOW 4: Completed Window -->
+    <div id="windowDone" class="view-section">
+        <div style="font-size: 50px;">✅</div>
+        <h2 style="color: #22c55e;">Tagumpay at Burado na!</h2>
+        <p>Ang file ay naipasa na sa iyong telepono at agad na nabura sa cloud server para sa seguridad.</p>
+        <button onclick="resetUI()">Magpasa Ulit ng Bago</button>
+    </div>
+
+</div>
+
+<script>
+function showWindow(windowId) {
+    document.querySelectorAll('.view-section').forEach(el => el.classList.remove('view-active'));
+    document.getElementById(windowId).classList.add('view-active');
+}
+
+function resetUI() {
+    document.getElementById('appUrl').value = '';
+    showWindow('windowInput');
+}
+
+async function startCloudFetch() {
+    const url = document.getElementById('appUrl').value;
+    if(!url) return alert('Maglagay muna ng valid link!');
+
+    showWindow('windowCloud');
+
+    try {
+        const response = await fetch('/api/fetch-to-cloud', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: url })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            startRealTimeStreamRelay(data.relayApi, data.filename, data.fileSize);
+        } else {
+            alert('Error: ' + data.error);
+            showWindow('windowInput');
+        }
+    } catch (err) {
+        alert('Hindi makakonekta sa cloud server.');
+        showWindow('windowInput');
+    }
+}
+
+async function startRealTimeStreamRelay(relayApiUrl, filename, totalBytes) {
+    showWindow('windowTransfer');
+
+    const progressBar = document.getElementById('progressBar');
+    const percentText = document.getElementById('percentText');
+    const sizeText = document.getElementById('sizeText');
+    const speedText = document.getElementById('speedText');
+
+    const startTime = Date.now();
+    let receivedBytes = 0;
+    const chunks = [];
+
+    try {
+        const response = await fetch(relayApiUrl);
+        const reader = response.body.getReader();
+
+        while(true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            receivedBytes += value.length;
+
+            const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100));
+            const elapsedSec = (Date.now() - startTime) / 1000;
+            const speedMB = elapsedSec > 0 ? ((receivedBytes / (1024 * 1024)) / elapsedSec).toFixed(2) : 0;
+
+            const recMB = (receivedBytes / (1024 * 1024)).toFixed(1);
+            const totMB = (totalBytes / (1024 * 1024)).toFixed(1);
+
+            progressBar.style.width = pct + '%';
+            percentText.innerText = pct + '%';
+            sizeText.innerText = `${recMB} MB / ${totMB} MB`;
+            speedText.innerText = `Bilis ng Pasahan: ${speedMB} MB/s`;
+        }
+
+        const blob = new Blob(chunks, { type: 'application/vnd.android.package-archive' });
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(downloadUrl);
+
+        setTimeout(() => {
+            showWindow('windowDone');
+        }, 1000);
+
+    } catch (err) {
+        alert('Naputol ang stream transfer sa phone.');
+        showWindow('windowInput');
+    }
+}
+</script>
+
+</body>
+  </html>
+  
